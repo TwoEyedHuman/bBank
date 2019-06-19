@@ -39,6 +39,22 @@ type Account struct {
     currency Currency
 }
 
+func deposit(acct Account, db *sql.DB, amt, xDate time.Time, effInterestRate float64) (status int) {
+    sqlStrParam := `
+        insert into transactions (fromAccId, toAccId, amount, xDate, nullified, effInterestRate) values ($1, $2, $3, $4, $5, $6);
+    `
+
+    _, err := db.Exec(sqlStrParam, 1, acct.acctNum, amt,  xDate.Format(RFC3339FullDate), false, effInterestRate)
+
+    if err != nil {
+        print("Error pushing deposit to server.")
+        status = 0
+        panic(err)
+    }
+    status = 1
+    return
+}
+
 func calcInterest(premium float64, interestRate float64, timeStart time.Time, timeEnd time.Time, interestTimeBase string) (calcInterest float64) {
     // calculate time passe din the units of interestTimeBase
     timeRatio := timeEnd.Sub(timeStart).Hours()/(365.0*24.0)
@@ -51,45 +67,38 @@ func dispX(xtn Transaction) {
     fmt.Println(xtn.xDate.Format("2006-01-02 15:04:05 Monday"), xtn.currency.symbol, xtn.amt)
 }
 
-func getBalance(acct Account, db *sql.DB) (balance float64) {
-    sqlStrDepParam := "select sum(amount) as amount from transactions where toaccid = %d and nullified = false;"
-    sqlStrDep := fmt.Sprintf(sqlStrDepParam, acct.acctNum)
+func getBalance(acct Account, db *sql.DB, pullDate time.Time) (balance float64) {
+    // pull in transactions that went into the account that havent been nullified
+    sqlStrParam := `
+        select toAccId
+            ,xDate
+            ,amount
+            ,effInterestRate
+        from transactions
+        where toaccid = $1
+        and nullified = false;`
 
-    sqlStrWthParam := "select sum(amount) as amount from transactions where fromaccid = %d and nullified = false;"
-    sqlStrWth := fmt.Sprintf(sqlStrWthParam, acct.acctNum)
+    rows, err := db.Query(sqlStrParam, acct.acctNum)  // run the query
 
-    rows, err := db.Query(sqlStrDep)
-
-    var depSum float64
+    // go through each valid transaction, and calculate its current value, adding to the balance
+    balance = 0
     for rows.Next() {
-        err = rows.Scan(&depSum)
+        var toaccid int
+        var xDate time.Time
+        var amount float64
+        var effInterestRate float64
+        err = rows.Scan(&toaccid, &xDate, &amount, &effInterestRate)
         if err != nil {
-            depSum=0
+            print(fmt.Sprintf("Error pulling transaction for account %d.\n", acct.acctNum))
+            panic(err)
         }
+        balance += calcInterest(amount, effInterestRate, xDate, pullDate, "year")
     }
-
-    rows, err = db.Query(sqlStrWth)
-
-    var wthSum float64
-    for rows.Next() {
-        err = rows.Scan(&wthSum)
-        if err != nil {
-            wthSum = 0
-        }
-    }
-
-    balance = depSum - wthSum
-    return
+   return
 }
 
 func main() {
     argsWithoutProg := os.Args[1:]
-
-//    sDate, _ := time.Parse(RFC3339FullDate, "2011-01-19")
-//    tDate, _ := time.Parse(RFC3339FullDate, "2012-01-19")
-//    fmt.Println(calcInterest(100, 0.05, sDate, tDate, "year"))
-//    xfr := Transaction{30, false, sDate, Currency{"US Dollars", "USD", "$"}}
-//    dispX(xfr)
 
     psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+ "password=%s dbname=%s sslmode=disable", host, port, user, argsWithoutProg, dbname)
     db, err := sql.Open("postgres", psqlInfo)
@@ -103,10 +112,11 @@ func main() {
     err = db.Ping()
 
     if err != nil {
+        fmt.Println("Error on DB ping.")
         panic(err)
     }
 
     specAcc := Account{354, "Savings", Currency{"US Dollars", "USD", "$"}}
 
-    fmt.Println(getBalance(specAcc, db))
+    fmt.Println(getBalance(specAcc, db, time.Now()))
 }
