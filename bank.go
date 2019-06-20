@@ -39,6 +39,54 @@ type Account struct {
     currency Currency
 }
 
+func withdraw(acct Account, db *sql.DB, amt, withdrawDate time.Time) (status int) {
+    if getBalance(acct, db, xDate) < amt {
+        status = 1
+        return
+    }
+    sqlStrParam := `
+        select fromAcc
+            ,toAcc
+            ,amt
+            ,nullified
+            ,xDate
+            ,effInterestRate
+        from transactions
+        where toaccid = $1
+        and nullified = false
+        order by xDate desc
+        ;
+    `
+    curr := Currency{"US Dollars", "USD", "$"}
+    rows, err :=db.Query(sqlStrParam, acct.acctNum)
+    var xtns []Transaction
+    run_sum := 0
+    for rows.Next() {
+        var fromAcc, toAcc int
+        var amt float64
+        var nullified bool
+        var xDate time.Time
+        var effInterestRate float64
+        err = rows.Scan(&fromAcc, &toAcc, &amt, &nullified, &xDate, &effInterestRate)
+        if err != nil {
+            print("Error pulling transaction for withdraw calculation.")
+            panic(err)
+        }
+        xtn := Transaction{fromAcc, toAcc, amt, nullified, xDate, effInterestRate}
+        xtns = append(xtns, xtn)
+    }
+}
+
+func sliceSumUntil(xtns []Transaction, amt float64) {
+    run_sum := 0
+    for _, xtn := range xtns {
+        run_sum += xtn.amt
+        if run_sum >= amt {
+            
+        }
+    }
+}
+
 func deposit(acct Account, db *sql.DB, amt, xDate time.Time, effInterestRate float64) (status int) {
     sqlStrParam := `
         insert into transactions (fromAccId, toAccId, amount, xDate, nullified, effInterestRate) values ($1, $2, $3, $4, $5, $6);
