@@ -1,6 +1,7 @@
 drop table if exists transactions;
 
 create table transactions (
+    xtnId INTEGER PRIMARY KEY,
     fromAccId INTEGER NOT NULL,
     toAccId INTEGER NOT NULL,
     amount DECIMAL(18,8),
