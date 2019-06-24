@@ -10,6 +10,7 @@ import (
     "sort"
     "math"
     "bufio"
+    "os/user"
 )
 
 /////////////////// User Interface Functions /////////////////////
@@ -21,8 +22,6 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
     cmd_tkn := strings.Split(strings.Trim(cmd, "\n"), " ")  // tokenize command for easy parsing
 
     if cmd_tkn[0] == "balance" {  // balance acctId
-        fmt.Println("Getting Balance")
-        fmt.Println(len(cmd_tkn))
         if len(cmd_tkn) == 2 {
             acctId, _ := strconv.Atoi(cmd_tkn[1])
             dispBalance(acctId, db)
@@ -31,14 +30,47 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
             dispError("Incorrect parameters supplied for balance request.")
         }
     } else if cmd_tkn[0] == "deposit" {  // deposit acctId amt interestRate
-        acctId, _ := strconv.Atoi(cmd_tkn[1])
-        amt, _ := strconv.ParseFloat(cmd_tkn[2], 64)
-        intRate, _ := strconv.ParseFloat(cmd_tkn[3], 64)
-        retVal = deposit(acctId, db, amt, time.Now(), intRate)
+        if len(cmd_tkn) == 4 {
+            acctId, _ := strconv.Atoi(cmd_tkn[1])
+            amt, _ := strconv.ParseFloat(cmd_tkn[2], 64)
+            intRate, _ := strconv.ParseFloat(cmd_tkn[3], 64)
+            retVal = deposit(acctId, db, amt, time.Now(), intRate)
+        } else {
+            dispError("Incorrect parameters supplied for deposit request.")
+        }
+    } else if cmd_tkn[0] == "withdraw" {  // withdraw acctId amt
+        if len(cmd_tkn) == 3 {
+            acctId, _ := strconv.Atoi(cmd_tkn[1])
+            amt, _ := strconv.ParseFloat(cmd_tkn[2], 64)
+            retVal = withdraw(acctId, db, amt, time.Now())
+        } else {
+            dispError("Incorrect parameters supplied for withdraw request.")
+        }
     } else if cmd_tkn[0] == "exit" || cmd_tkn[0] == "quit" {
         retVal = 1
     } else {
         dispError("Invalid command. Try again.")
+    }
+
+    return
+}
+
+func getNewXtnId(db *sql.DB) (nextXtnId int) {
+    sqlStr := "select max(xtnId) from transactions;"
+
+    rows, err := db.Query(sqlStr)
+
+    if err != nil {
+        print("Error pulling transaction ID")
+        panic(err)
+    }
+
+    for rows.Next() {
+        var maxXtnId int
+        err = rows.Scan(&maxXtnId)
+        if err == nil {
+            nextXtnId = maxXtnId + 1
+        }
     }
 
     return
@@ -56,12 +88,12 @@ func dispBalance(acctId int, db *sql.DB) {
     fmt.Println("--------------------------------------")
 }
 
-func buildXtns(acct Account, db *sql.DB) ([]Transaction) {
+func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
     sqlStrParam := `
         select xtnId
             ,fromAccId
             ,toAccId
-            ,amt
+            ,amount
             ,xDate
             ,effInterestRate
         from transactions
@@ -71,7 +103,11 @@ func buildXtns(acct Account, db *sql.DB) ([]Transaction) {
         ;
     `
     curr := Currency{"US Dollars", "USD", "$"}
-    rows, err :=db.Query(sqlStrParam, acct.acctNum)
+    rows, err :=db.Query(sqlStrParam, acctId)
+
+    if err != nil {
+        panic(err)
+    }
 
     // build a slice of Transactions for this account
     var xtns []Transaction
@@ -81,7 +117,7 @@ func buildXtns(acct Account, db *sql.DB) ([]Transaction) {
         var amt float64
         var xDate time.Time
         var effInterestRate float64
-        err = rows.Scan(&xtnId, &amt, &xDate, &effInterestRate)
+        err = rows.Scan(&xtnId, &fromAccId, &toAccId, &amt, &xDate, &effInterestRate)
         if err != nil {
             print("Error pulling transaction for withdraw calculation.")
             panic(err)
@@ -119,20 +155,20 @@ func nullifyXtns(xtnIds []int, db *sql.DB) {
     }
 }
 
-func withdraw(acct Account, db *sql.DB, amt float64, withdrawDate time.Time) (status int) {
+func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (status int) {
     // acct : the account that will be withdrawn from
     // db : connection to the database
     // amt : the amount that is to be withdrawn
     // withdrawDate : date that the amount is withdrawn
 
     //ensure there is enough in the account to cover the withdraw
-    if getBalance(acct.acctNum, db, withdrawDate) < amt {
+    if getBalance(acctId, db, withdrawDate) < amt {
         status = 1
         return
     }
 
     // extract all valid deposits for this account
-    xtns := buildXtns(acct, db)
+    xtns := buildXtns(acctId, db)
 
     // sort the transactions from latest to earliest
     sort.Slice(xtns, func(i, j int) bool {
@@ -152,7 +188,8 @@ func withdraw(acct Account, db *sql.DB, amt float64, withdrawDate time.Time) (st
 
     _ = deposit(newXtn.toAcc, db, newXtn.amt, newXtn.xDate, newXtn.effInterestRate)
 
-   return 0
+    status = 0
+   return
 }
 
 func cumulativeSum(slc []float64) ([]float64) {
@@ -201,8 +238,9 @@ func deposit(acctId int, db *sql.DB, amt float64, xDate time.Time, effInterestRa
     sqlStrParam := `
         insert into transactions (xtnId, fromAccId, toAccId, amount, xDate, nullified, effInterestRate) values ($1, $2, $3, $4, $5, $6, $7);
     `
+    newXtnId := getNewXtnId(db)
 
-    _, err := db.Exec(sqlStrParam, 700, 1, acctId, amt,  xDate.Format(RFC3339FullDate), false, effInterestRate)
+    _, err := db.Exec(sqlStrParam, newXtnId, 1, acctId, amt,  xDate.Format(RFC3339FullDate), false, effInterestRate)
 
     if err != nil {
         print("Error pushing deposit to server.")
@@ -284,7 +322,13 @@ func establishConn(host string, port int, usr string, pword string, dbname strin
 }
 
 func userInterface() {
-    db := establishConn("localhost", 5432, "", "", "", "disable") //usr, pword, database
+    user, err := user.Current()
+
+    if err != nil {
+        panic(err)
+    }
+
+    db := establishConn("localhost", 5432, user.Username, "pword", "drexel", "disable") //usr, pword, database
 
     reader := bufio.NewReader(os.Stdin)
 
