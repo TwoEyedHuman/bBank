@@ -46,6 +46,13 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
         } else {
             dispError("Incorrect parameters supplied for withdraw request.")
         }
+    } else if cmd_tkn[0] == "xtn" {  // xtn xtnId
+        if len(cmd_tkn) == 2 {
+            xtnId, _ := strconv.Atoi(cmd_tkn[1])
+            dispXtn(xtnId)
+        } else {
+            dispError("Incorrect parameters supplied for deposit request.")
+        }
     } else if cmd_tkn[0] == "exit" || cmd_tkn[0] == "quit" {
         retVal = 1
     } else {
@@ -56,9 +63,12 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
 }
 
 func getNewXtnId(db *sql.DB) (nextXtnId int) {
-    sqlStr := "select max(xtnId) from transactions;"
+    // to create a new transaction, a fresh, unused transaction ID
+    // must be created
+    // db : database connection
+    sqlStr := "select max(xtnId) from transactions;"  // obtain the highest value of the transaction IDs
 
-    rows, err := db.Query(sqlStr)
+    rows, err := db.Query(sqlStr)  // query the database for the last transaction ID
 
     if err != nil {
         print("Error pulling transaction ID")
@@ -67,9 +77,9 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
 
     for rows.Next() {
         var maxXtnId int
-        err = rows.Scan(&maxXtnId)
+        err = rows.Scan(&maxXtnId)  // replace the maxItnId with what is in the database
         if err == nil {
-            nextXtnId = maxXtnId + 1
+            nextXtnId = maxXtnId + 1  // set the new transaction ID as one above the previous highest
         }
     }
 
@@ -77,18 +87,27 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
 }
 
 func dispError(str string) {
+    // str : string of the error message to display
     fmt.Println("-------------------------------------")
     fmt.Sprintf("ERROR: %s\n", str)
     fmt.Println("-------------------------------------")
 }
 
 func dispBalance(acctId int, db *sql.DB) {
+    // acctId : account ID number of the balance we want to show
+    // db : database connection
     fmt.Println("--------------------------------------")
     fmt.Print(fmt.Sprintf("Account ID: %d\n Balance: %.2f\n", acctId, getBalance(acctId, db,  time.Now())))
     fmt.Println("--------------------------------------")
 }
 
 func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
+    // this function builds a slice of Transactions that are pointing 
+    // to the account in question
+    // acctId : account ID number of the account in question
+    // db : database connection
+
+    // query the database for all transactions that point to the account in question
     sqlStrParam := `
         select xtnId
             ,fromAccId
@@ -98,7 +117,7 @@ func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
             ,effInterestRate
         from transactions
         where toaccid = $1
-        and nullified = false
+        and nullified = false -- valid transactions only
         order by xDate desc
         ;
     `
@@ -122,13 +141,15 @@ func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
             print("Error pulling transaction for withdraw calculation.")
             panic(err)
         }
-        xtn := Transaction{xtnId, fromAccId, toAccId, amt, false, xDate, curr, effInterestRate}
-        xtns = append(xtns, xtn)
+        xtn := Transaction{xtnId, fromAccId, toAccId, amt, false, xDate, curr, effInterestRate} // build the pulled transaction
+        xtns = append(xtns, xtn)  // append the pulled transaction to the end of the slice
     }
     return xtns
 }
 
 func nullifyXtn(xtnId int, db *sql.DB) int {
+    // this function nullifies the transaction associated
+    // with the xtnId
     // xtnId : id number of the transaction
     // db : connection to the database
 
@@ -147,6 +168,9 @@ func nullifyXtn(xtnId int, db *sql.DB) int {
 }
 
 func nullifyXtns(xtnIds []int, db *sql.DB) {
+    // nullify a set of transactions
+    // xtnIds : slice containing the transaction IDs we want to nullify
+    // db : database connection
     for _, xtnId := range xtnIds {
         err := nullifyXtn(xtnId, db)
         if err == 1 {
@@ -224,16 +248,6 @@ func idWithdrawNullXtn(xtns []Transaction, amt float64, withdrawDate time.Time) 
     return nullXtnIds, newXtn
 }
 
-//func sliceSumUntil(xtns []Transaction, amt float64) {
-//    run_sum := 0
-//    for _, xtn := range xtns {
-//        run_sum += xtn.amt
-//        if run_sum >= amt {
-//            
-//        }
-//    }
-//}
-
 func deposit(acctId int, db *sql.DB, amt float64, xDate time.Time, effInterestRate float64) (status int) {
     sqlStrParam := `
         insert into transactions (xtnId, fromAccId, toAccId, amount, xDate, nullified, effInterestRate) values ($1, $2, $3, $4, $5, $6, $7);
@@ -252,13 +266,18 @@ func deposit(acctId int, db *sql.DB, amt float64, xDate time.Time, effInterestRa
 }
 
 func calcInterest(premium float64, interestRate float64, timeStart time.Time, timeEnd time.Time, interestTimeBase string) (calcInterest float64) {
-    // calculate time passe din the units of interestTimeBase
-    timeRatio := timeEnd.Sub(timeStart).Hours()/(365.0*24.0)
-    calcInterest = premium * math.Exp(interestRate * timeRatio)
+    // calculate time passed in the units of interestTimeBase
+    // premium : the original value of the transaction
+    // interestRate : the interest rate on the transaction
+    // timeStart : this is the beginning of the time period we want to measure
+    // timeEnd : this is the end of the time period we want to measure
+    // interestTimeBase : this is the units of time that the interestRate is active over
+    timeRatio := timeEnd.Sub(timeStart).Hours()/(365.0*24.0) // calculate the percent of the timeBase that has passed
+    calcInterest = premium * math.Exp(interestRate * timeRatio)  // calculate the current value of the interest
     return
 }
 
-func dispX(xtn Transaction) {
+func dispXtn(xtn Transaction) {
     fmt.Println("--------------------------------------------")
     fmt.Println(xtn.xDate.Format("2006-01-02 15:04:05 Monday"), xtn.currency.symbol, xtn.amt)
 }
