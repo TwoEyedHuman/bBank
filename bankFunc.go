@@ -11,6 +11,7 @@ import (
     "math"
     "bufio"
     "os/user"
+    "errors"
 )
 
 /////////////////// User Interface Functions /////////////////////
@@ -47,7 +48,10 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
         if len(cmd_tkn) == 3 {
             acctId, _ := strconv.Atoi(cmd_tkn[1])
             amt, _ := strconv.ParseFloat(cmd_tkn[2], 64)
-            retVal = withdraw(acctId, db, amt, time.Now())
+            err := withdraw(acctId, db, amt, time.Now())
+            if err != nil {
+                dispError(err.Error())
+            }
         } else {
             dispError("Incorrect parameters supplied for withdraw request.")
         }
@@ -100,17 +104,26 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
 
 func dispError(str string) {
     // str : string of the error message to display
-    fmt.Println("-------------------------------------ERROR")
+    fmt.Println("_______________________________________________ERROR")
     fmt.Print(fmt.Sprintf("  %s\n", str))
-    fmt.Println("------------------------------------------")
+    fmt.Println(fmt.Sprintf("----------------------------------------------------\n"))
 }
 
 func dispBalance(acctId int, db *sql.DB) {
     // acctId : account ID number of the balance we want to show
     // db : database connection
-    fmt.Println("------------------------------------BALANCE")
-    fmt.Print(fmt.Sprintf("--%d\n Balance: %.2f\n", acctId, getBalance(acctId, db,  time.Now())))
-    fmt.Println("-------------------------------------------")
+    fmt.Println("_____________________________________________BALANCE")
+    fmt.Print(fmt.Sprintf("--%d\n  Balance: %.2f\n", acctId, getBalance(acctId, db,  time.Now())))
+    fmt.Println(fmt.Sprintf("----------------------------------------------------\n"))
+}
+
+func dispXtn(xtnId int, db *sql.DB) {
+    xtn := getXtn(xtnId, db)
+    fmt.Println("_________________________________________________XTN")
+    fmt.Print(fmt.Sprintf("--%d (%s)\n", xtnId, xtn.xDate.Format("2006-01-02")))
+    fmt.Print(fmt.Sprintf("  %d --> %d", xtn.fromAcc, xtn.toAcc))
+    fmt.Print(fmt.Sprintf("  %s%.2f @ %.4f%%\n", xtn.currency.symbol, xtn.amt, xtn.effInterestRate))
+    fmt.Println(fmt.Sprintf("----------------------------------------------------\n"))
 }
 
 func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
@@ -192,7 +205,7 @@ func nullifyXtns(xtnIds []int, db *sql.DB) {
     }
 }
 
-func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (status int) {
+func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (errCode error) {
     // acct : the account that will be withdrawn from
     // db : connection to the database
     // amt : the amount that is to be withdrawn
@@ -200,7 +213,7 @@ func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (stat
 
     //ensure there is enough in the account to cover the withdraw
     if getBalance(acctId, db, withdrawDate) < amt {
-        status = 1
+        errCode = errors.New("Withdrawal amount exceeds balance of account.")
         return
     }
 
@@ -220,14 +233,12 @@ func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (stat
 
     nullifyXtnsList, newXtn := idWithdrawNullXtn(xtns, amt,  withdrawDate)
 
-    fmt.Print(nullifyXtnsList)
-
     nullifyXtns(nullifyXtnsList, db)
 
     _ = deposit(newXtn.toAcc, db, newXtn.amt, newXtn.xDate, newXtn.effInterestRate)
 
-    status = 0
-   return
+    errCode = nil
+    return
 }
 
 func cumulativeSum(slc []float64) ([]float64) {
@@ -252,7 +263,6 @@ func idWithdrawNullXtn(xtns []Transaction, amt float64, withdrawDate time.Time) 
     var newXtn Transaction
     for _, xtn := range xtns {
         run_sum += calcInterest(xtn.amt, xtn.effInterestRate, xtn.xDate, withdrawDate, "year")
-        fmt.Println(calcInterest(xtn.amt, xtn.effInterestRate, xtn.xDate, withdrawDate, "year"))
         if (run_sum > amt) {
             newXtn = Transaction{0, -1, xtns[0].toAcc, run_sum - amt, false, withdrawDate, xtn.currency, xtn.effInterestRate}
             nullXtnIds = append(nullXtnIds, xtn.xtnId)
@@ -289,18 +299,8 @@ func calcInterest(premium float64, interestRate float64, timeStart time.Time, ti
     // timeEnd : this is the end of the time period we want to measure
     // interestTimeBase : this is the units of time that the interestRate is active over
     timeRatio := timeEnd.Sub(timeStart).Hours()/(365.0*24.0) // calculate the percent of the timeBase that has passed
-    fmt.Println(fmt.Sprintf("premium: %.2f   timeRatio: %.8f", premium, timeRatio))
     calcInterest = premium * math.Exp(interestRate * timeRatio)  // calculate the current value of the interest
     return
-}
-
-func dispXtn(xtnId int, db *sql.DB) {
-    xtn := getXtn(xtnId, db)
-    fmt.Println("-----------------------------------------XTN")
-    fmt.Print(fmt.Sprintf("--%d (%s)\n", xtnId, xtn.xDate.Format("2006-01-02")))
-    fmt.Print(fmt.Sprintf("  %d --> %d", xtn.fromAcc, xtn.toAcc))
-    fmt.Print(fmt.Sprintf("  %s%.2f @ %.4f%%\n", xtn.currency.symbol, xtn.amt, xtn.effInterestRate))
-    fmt.Println("--------------------------------------------")
 }
 
 func getXtn(xtnId int, db *sql.DB) (xtn Transaction) {
