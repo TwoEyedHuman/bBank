@@ -1,2 +1,2 @@
 # bBank
-A side project to implement a banking program.
+A banking program that can handle continuous interest.
