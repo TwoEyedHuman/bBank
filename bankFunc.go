@@ -21,6 +21,7 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
 
     cmd_tkn := strings.Split(strings.Trim(cmd, "\n"), " ")  // tokenize command for easy parsing
 
+    // check the balance of an account
     if cmd_tkn[0] == "balance" {  // balance acctId
         if len(cmd_tkn) == 2 {
             acctId, _ := strconv.Atoi(cmd_tkn[1])
@@ -29,6 +30,8 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
         } else {
             dispError("Incorrect parameters supplied for balance request.")
         }
+
+    //  deposit an amount into an account
     } else if cmd_tkn[0] == "deposit" {  // deposit acctId amt interestRate
         if len(cmd_tkn) == 4 {
             acctId, _ := strconv.Atoi(cmd_tkn[1])
@@ -38,6 +41,8 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
         } else {
             dispError("Incorrect parameters supplied for deposit request.")
         }
+
+    // withdraw an amount from an account
     } else if cmd_tkn[0] == "withdraw" {  // withdraw acctId amt
         if len(cmd_tkn) == 3 {
             acctId, _ := strconv.Atoi(cmd_tkn[1])
@@ -46,15 +51,21 @@ func cmdHandler(cmd string, db *sql.DB) (retVal int) {
         } else {
             dispError("Incorrect parameters supplied for withdraw request.")
         }
+
+    // display the information on a transaction
     } else if cmd_tkn[0] == "xtn" {  // xtn xtnId
         if len(cmd_tkn) == 2 {
             xtnId, _ := strconv.Atoi(cmd_tkn[1])
-            dispXtn(xtnId)
+            dispXtn(xtnId, db)
         } else {
             dispError("Incorrect parameters supplied for deposit request.")
         }
+
+    // end the program
     } else if cmd_tkn[0] == "exit" || cmd_tkn[0] == "quit" {
         retVal = 1
+
+    // handle incorrect inputs
     } else {
         dispError("Invalid command. Try again.")
     }
@@ -88,17 +99,17 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
 
 func dispError(str string) {
     // str : string of the error message to display
-    fmt.Println("-------------------------------------")
+    fmt.Println("-------------------------------------ERROR")
     fmt.Sprintf("ERROR: %s\n", str)
-    fmt.Println("-------------------------------------")
+    fmt.Println("------------------------------------------")
 }
 
 func dispBalance(acctId int, db *sql.DB) {
     // acctId : account ID number of the balance we want to show
     // db : database connection
-    fmt.Println("--------------------------------------")
-    fmt.Print(fmt.Sprintf("Account ID: %d\n Balance: %.2f\n", acctId, getBalance(acctId, db,  time.Now())))
-    fmt.Println("--------------------------------------")
+    fmt.Println("------------------------------------BALANCE")
+    fmt.Print(fmt.Sprintf("--%d\n Balance: %.2f\n", acctId, getBalance(acctId, db,  time.Now())))
+    fmt.Println("-------------------------------------------")
 }
 
 func buildXtns(acctId int, db *sql.DB) ([]Transaction) {
@@ -161,6 +172,7 @@ func nullifyXtn(xtnId int, db *sql.DB) int {
     `
     _, err := db.Exec(sqlStrParam, xtnId)
     if err != nil {
+        fmt.Println(xtnId)
         return 1
     } else {
         return 0
@@ -254,7 +266,7 @@ func deposit(acctId int, db *sql.DB, amt float64, xDate time.Time, effInterestRa
     `
     newXtnId := getNewXtnId(db)
 
-    _, err := db.Exec(sqlStrParam, newXtnId, 1, acctId, amt,  xDate.Format(RFC3339FullDate), false, effInterestRate)
+    _, err := db.Exec(sqlStrParam, newXtnId, 1, acctId, amt,  xDate.Format("2006-01-02"), false, effInterestRate)
 
     if err != nil {
         print("Error pushing deposit to server.")
@@ -277,12 +289,16 @@ func calcInterest(premium float64, interestRate float64, timeStart time.Time, ti
     return
 }
 
-func dispXtn(xtnId Transaction) {
+func dispXtn(xtnId int, db *sql.DB) {
+    xtn := getXtn(xtnId, db)
+    fmt.Println("-----------------------------------------XTN")
+    fmt.Print(fmt.Sprintf("--%d (%s)\n", xtnId, xtn.xDate.Format("2006-01-02")))
+    fmt.Print(fmt.Sprintf("  %d --> %d", xtn.fromAcc, xtn.toAcc))
+    fmt.Print(fmt.Sprintf("  %s%.2f @ %.4f%%\n", xtn.currency.symbol, xtn.amt, xtn.effInterestRate))
     fmt.Println("--------------------------------------------")
-    fmt.Println(xtn.xDate.Format("2006-01-02 15:04:05 Monday"), xtn.currency.symbol, xtn.amt)
 }
 
-func getXtn(xtnId int) Transaction {
+func getXtn(xtnId int, db *sql.DB) (xtn Transaction) {
     sqlStrParam := `
         select fromAccId
             ,toAccId
@@ -310,9 +326,13 @@ func getXtn(xtnId int) Transaction {
         var nullified bool
         var effInterestRate float64
         err := rows.Scan(&fromAccId, &toAccId, &amount, &xDate, &nullified, &effInterestRate)
-        xtn := Transaction{xtnId, fromAccId, toAccId, amount, nullified, xDate, curr, effInterestRate}
-        return xtn
+        if err != nil {
+            print("Error pulling row contents from transaction.")
+        } else {
+            xtn = Transaction{xtnId, fromAccId, toAccId, amount, nullified, xDate, curr, effInterestRate}
+        }
     }
+    return
 }
 
 func getBalance(acctId int, db *sql.DB, pullDate time.Time) (balance float64) {
@@ -327,7 +347,7 @@ func getBalance(acctId int, db *sql.DB, pullDate time.Time) (balance float64) {
             ,effInterestRate
         from transactions
         where toaccid = $1
-        and xDate < '$2'
+        and xDate <= $2
         and nullified = false;`
 
     rows, err := db.Query(sqlStrParam, acctId, pullDate.Format("2006-01-02"))  // run the query
