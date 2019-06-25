@@ -277,13 +277,49 @@ func calcInterest(premium float64, interestRate float64, timeStart time.Time, ti
     return
 }
 
-func dispXtn(xtn Transaction) {
+func dispXtn(xtnId Transaction) {
     fmt.Println("--------------------------------------------")
     fmt.Println(xtn.xDate.Format("2006-01-02 15:04:05 Monday"), xtn.currency.symbol, xtn.amt)
 }
 
+func getXtn(xtnId int) Transaction {
+    sqlStrParam := `
+        select fromAccId
+            ,toAccId
+            ,amount
+            ,xDate
+            ,nullified
+            ,effInterestRate
+        from transactions
+        where xtnId = $1
+    `
+
+    rows, err := db.Query(sqlStrParam, xtnId)
+
+    if err != nil {
+        print("Error querying transaction from database.")
+        panic(err)
+    }
+
+    curr := Currency{"US Dollars", "USD", "$"}
+
+    for rows.Next() {
+        var fromAccId, toAccId int
+        var amount float64
+        var xDate time.Time
+        var nullified bool
+        var effInterestRate float64
+        err := rows.Scan(&fromAccId, &toAccId, &amount, &xDate, &nullified, &effInterestRate)
+        xtn := Transaction{xtnId, fromAccId, toAccId, amount, nullified, xDate, curr, effInterestRate}
+        return xtn
+    }
+}
+
 func getBalance(acctId int, db *sql.DB, pullDate time.Time) (balance float64) {
     // pull in transactions that went into the account that havent been nullified
+    // acctId : account ID number of the account in question
+    // db : database connection
+    // pullDate :  balance effective of this date
     sqlStrParam := `
         select toAccId
             ,xDate
@@ -291,9 +327,10 @@ func getBalance(acctId int, db *sql.DB, pullDate time.Time) (balance float64) {
             ,effInterestRate
         from transactions
         where toaccid = $1
+        and xDate < '$2'
         and nullified = false;`
 
-    rows, err := db.Query(sqlStrParam, acctId)  // run the query
+    rows, err := db.Query(sqlStrParam, acctId, pullDate.Format("2006-01-02"))  // run the query
 
     if err != nil {
         panic(err)
