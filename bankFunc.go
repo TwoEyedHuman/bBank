@@ -86,6 +86,7 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
         panic(err)
     }
 
+    // extract the transaction ID from the query, add 1, and return
     for rows.Next() {
         var maxXtnId int
         err = rows.Scan(&maxXtnId)  // replace the maxItnId with what is in the database
@@ -100,7 +101,7 @@ func getNewXtnId(db *sql.DB) (nextXtnId int) {
 func dispError(str string) {
     // str : string of the error message to display
     fmt.Println("-------------------------------------ERROR")
-    fmt.Sprintf("ERROR: %s\n", str)
+    fmt.Print(fmt.Sprintf("  %s\n", str))
     fmt.Println("------------------------------------------")
 }
 
@@ -166,7 +167,7 @@ func nullifyXtn(xtnId int, db *sql.DB) int {
 
     sqlStrParam := `
         update transactions
-        set nullify = true
+        set nullified = true
         where xtnId = $1
         ;
     `
@@ -219,6 +220,7 @@ func withdraw(acctId int, db *sql.DB, amt float64, withdrawDate time.Time) (stat
 
     nullifyXtnsList, newXtn := idWithdrawNullXtn(xtns, amt,  withdrawDate)
 
+    fmt.Print(nullifyXtnsList)
 
     nullifyXtns(nullifyXtnsList, db)
 
@@ -250,8 +252,10 @@ func idWithdrawNullXtn(xtns []Transaction, amt float64, withdrawDate time.Time) 
     var newXtn Transaction
     for _, xtn := range xtns {
         run_sum += calcInterest(xtn.amt, xtn.effInterestRate, xtn.xDate, withdrawDate, "year")
+        fmt.Println(calcInterest(xtn.amt, xtn.effInterestRate, xtn.xDate, withdrawDate, "year"))
         if (run_sum > amt) {
             newXtn = Transaction{0, -1, xtns[0].toAcc, run_sum - amt, false, withdrawDate, xtn.currency, xtn.effInterestRate}
+            nullXtnIds = append(nullXtnIds, xtn.xtnId)
             break
         } else {
             nullXtnIds = append(nullXtnIds, xtn.xtnId)
@@ -285,6 +289,7 @@ func calcInterest(premium float64, interestRate float64, timeStart time.Time, ti
     // timeEnd : this is the end of the time period we want to measure
     // interestTimeBase : this is the units of time that the interestRate is active over
     timeRatio := timeEnd.Sub(timeStart).Hours()/(365.0*24.0) // calculate the percent of the timeBase that has passed
+    fmt.Println(fmt.Sprintf("premium: %.2f   timeRatio: %.8f", premium, timeRatio))
     calcInterest = premium * math.Exp(interestRate * timeRatio)  // calculate the current value of the interest
     return
 }
